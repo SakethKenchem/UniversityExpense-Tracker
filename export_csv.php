@@ -93,94 +93,98 @@ class ExpenseExporter
         $this->sheet->getStyle("{$startCol}{$rowNum}:{$endCol}{$rowNum}")->getFont()->setBold(true);
     }
 
-    public function export()
-    {
-        $expenses = $this->fetchCSVData("expenses", ["year", "month", "day", "category", "description", "amount"]);
-        $incomes = $this->fetchCSVData("income", ["year", "month", "day", "source", "amount"]);
+public function export()
+{
+    $expenses = $this->fetchCSVData("expenses", ["year", "month", "day", "category", "description", "amount"]);
+    $incomes = $this->fetchCSVData("income", ["year", "month", "day", "source", "amount"]);
 
-        $totalExpenses = array_sum(array_column($expenses, 'amount'));
-        $totalIncome = array_sum(array_column($incomes, 'amount'));
-        $remainingBalance = $totalIncome - $totalExpenses;
+    $totalExpenses = array_sum(array_column($expenses, 'amount'));
+    $totalIncome = array_sum(array_column($incomes, 'amount'));
+    $remainingBalance = $totalIncome - $totalExpenses;
 
-        // Expenses Section
-        $expensesCol = 'A';
-        $row = 1;
-        $this->sheet->setCellValue("{$expensesCol}{$row}", '==== EXPENSES ====');
-        $this->boldRow($row, 4, $expensesCol);
+    // Expenses Sheet
+    $expensesSheet = $this->spreadsheet->getActiveSheet();
+    $expensesSheet->setTitle('Expenses');
+    $row = 1;
+    $expensesSheet->setCellValue("A{$row}", '==== EXPENSES ====');
+    $this->sheet = $expensesSheet; $this->boldRow($row, 4, 'A');
+    $row++;
+    $expensesSheet->fromArray(['Date', 'Category', 'Description', 'Amount'], NULL, "A{$row}");
+    $this->sheet = $expensesSheet; $this->boldRow($row, 4, 'A');
+    $row++;
+    foreach ($expenses as $e) {
+        $date = sprintf('%04d-%02d-%02d', $e['year'], $e['month'], $e['day']);
+        $expensesSheet->fromArray([$date, $e['category'], $e['description'], number_format($e['amount'], 2)], NULL, "A{$row}");
         $row++;
-        $this->sheet->fromArray(['Date', 'Category', 'Description', 'Amount'], NULL, "{$expensesCol}{$row}");
-        $this->boldRow($row, 4, $expensesCol);
-        $row++;
-        foreach ($expenses as $e) {
-            $date = sprintf('%04d-%02d-%02d', $e['year'], $e['month'], $e['day']);
-            $this->sheet->fromArray([$date, $e['category'], $e['description'], number_format($e['amount'], 2)], NULL, "{$expensesCol}{$row}");
-            $row++;
-        }
-        $this->sheet->fromArray(['Total Expenses', '', '', number_format($totalExpenses, 2)], NULL, "{$expensesCol}{$row}");
-
-        // Income Section
-        $incomeCol = 'F';
-        $incomeRow = 1;
-        $this->sheet->setCellValue("{$incomeCol}{$incomeRow}", '==== INCOME ====');
-        $this->boldRow($incomeRow, 3, $incomeCol);
-        $incomeRow++;
-        $this->sheet->fromArray(['Date', 'Source', 'Amount'], NULL, "{$incomeCol}{$incomeRow}");
-        $this->boldRow($incomeRow, 3, $incomeCol);
-        $incomeRow++;
-        foreach ($incomes as $i) {
-            $date = sprintf('%04d-%02d-%02d', $i['year'], $i['month'], $i['day']);
-            $this->sheet->fromArray([$date, $i['source'], number_format($i['amount'], 2)], NULL, "{$incomeCol}{$incomeRow}");
-            $incomeRow++;
-        }
-        $this->sheet->fromArray(['Total Income', '', number_format($totalIncome, 2)], NULL, "{$incomeCol}{$incomeRow}");
-
-        // Remaining Balance Section
-        $balanceCol = 'K';
-        $balanceRow = 1;
-        $this->sheet->setCellValue("{$balanceCol}{$balanceRow}", '==== REMAINING BALANCE ====');
-        $this->boldRow($balanceRow, 2, $balanceCol);
-        $balanceRow++;
-        $this->sheet->fromArray(['Balance', number_format($remainingBalance, 2)], NULL, "{$balanceCol}{$balanceRow}");
-        $this->boldRow($balanceRow, 2, $balanceCol);
-
-        // Find max rows used in main 3 sections for spacing later
-        $maxRow = max($row, $incomeRow, $balanceRow);
-        $startRow = $maxRow + 3;
-
-        // Expense Classification by Month
-        $this->sheet->setCellValue("A{$startRow}", '==== EXPENSE CLASSIFICATION BY MONTH (Uber, Food, Airtime) ====');
-        $this->boldRow($startRow, 4, 'A');
-        $startRow++;
-        $this->sheet->fromArray(['Month', 'Uber', 'Food', 'Airtime'], NULL, "A{$startRow}");
-        $this->boldRow($startRow, 4, 'A');
-        $startRow++;
-
-        $expensesByMonth = $this->groupByMonth($expenses);
-        $categories = ['uber', 'food', 'airtime'];
-        foreach ($expensesByMonth as $month => $rows) {
-            $classified = $this->classifyByCategory($rows, $categories);
-            $this->sheet->fromArray([
-                $month,
-                number_format($classified['uber'], 2),
-                number_format($classified['food'], 2),
-                number_format($classified['airtime'], 2),
-            ], NULL, "A{$startRow}");
-            $startRow++;
-        }
-
-        // Autofit columns
-        foreach (range('A', 'L') as $col) {
-            $this->sheet->getColumnDimension($col)->setAutoSize(true);
-        }
-
-        // Output Excel file
-        header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-        header('Content-Disposition: attachment; filename="university_expenses.xlsx"');
-        $writer = new Xlsx($this->spreadsheet);
-        $writer->save('php://output');
-        $this->conn->close();
-        exit;
     }
+    $expensesSheet->fromArray(['Total Expenses', '', '', number_format($totalExpenses, 2)], NULL, "A{$row}");
+
+    // Income Sheet
+    $incomeSheet = $this->spreadsheet->createSheet();
+    $incomeSheet->setTitle('Income');
+    $incomeRow = 1;
+    $incomeSheet->setCellValue("A{$incomeRow}", '==== INCOME ====');
+    $this->sheet = $incomeSheet; $this->boldRow($incomeRow, 3, 'A');
+    $incomeRow++;
+    $incomeSheet->fromArray(['Date', 'Source', 'Amount'], NULL, "A{$incomeRow}");
+    $this->sheet = $incomeSheet; $this->boldRow($incomeRow, 3, 'A');
+    $incomeRow++;
+    foreach ($incomes as $i) {
+        $date = sprintf('%04d-%02d-%02d', $i['year'], $i['month'], $i['day']);
+        $incomeSheet->fromArray([$date, $i['source'], number_format($i['amount'], 2)], NULL, "A{$incomeRow}");
+        $incomeRow++;
+    }
+    $incomeSheet->fromArray(['Total Income', '', number_format($totalIncome, 2)], NULL, "A{$incomeRow}");
+
+    // Remaining Balance Sheet
+    $balanceSheet = $this->spreadsheet->createSheet();
+    $balanceSheet->setTitle('Balance');
+    $balanceRow = 1;
+    $balanceSheet->setCellValue("A{$balanceRow}", '==== REMAINING BALANCE ====');
+    $this->sheet = $balanceSheet; $this->boldRow($balanceRow, 2, 'A');
+    $balanceRow++;
+    $balanceSheet->fromArray(['Balance', number_format($remainingBalance, 2)], NULL, "A{$balanceRow}");
+    $this->sheet = $balanceSheet; $this->boldRow($balanceRow, 2, 'A');
+
+    // Expense Classification by Month Sheet
+    $classSheet = $this->spreadsheet->createSheet();
+    $classSheet->setTitle('Classification');
+    $startRow = 1;
+    $classSheet->setCellValue("A{$startRow}", '==== EXPENSE CLASSIFICATION BY MONTH (Uber, Food, Airtime) ====');
+    $this->sheet = $classSheet; $this->boldRow($startRow, 4, 'A');
+    $startRow++;
+    $classSheet->fromArray(['Month', 'Uber', 'Food', 'Airtime'], NULL, "A{$startRow}");
+    $this->sheet = $classSheet; $this->boldRow($startRow, 4, 'A');
+    $startRow++;
+
+    $expensesByMonth = $this->groupByMonth($expenses);
+    $categories = ['uber', 'food', 'airtime'];
+    foreach ($expensesByMonth as $month => $rows) {
+        $classified = $this->classifyByCategory($rows, $categories);
+        $classSheet->fromArray([
+            $month,
+            number_format($classified['uber'], 2),
+            number_format($classified['food'], 2),
+            number_format($classified['airtime'], 2),
+        ], NULL, "A{$startRow}");
+        $startRow++;
+    }
+
+    // Autofit columns for all sheets
+    foreach ($this->spreadsheet->getAllSheets() as $sheet) {
+        foreach (range('A', 'L') as $col) {
+            $sheet->getColumnDimension($col)->setAutoSize(true);
+        }
+    }
+
+    // Output Excel file
+    header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    header('Content-Disposition: attachment; filename="university_expenses.xlsx"');
+    $writer = new Xlsx($this->spreadsheet);
+    $writer->save('php://output');
+    $this->conn->close();
+    exit;
+}
 }
 
 // Usage

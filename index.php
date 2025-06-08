@@ -1,6 +1,28 @@
+<?php
+// --- PHP delete handler at the top of the file ---
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'delete') {
+    $type = $_POST['type'] ?? '';
+    $id = intval($_POST['id'] ?? 0);
+    $allowed = ['expense' => 'expenses', 'income' => 'income'];
+    $table = $allowed[$type] ?? null;
+    $success = false;
+    if ($table && $id > 0) {
+        $mysqli = new mysqli("localhost", "root", "S00per-d00per", "expense_tracker");
+        if (!$mysqli->connect_error) {
+            $stmt = $mysqli->prepare("DELETE FROM `$table` WHERE id=?");
+            $stmt->bind_param("i", $id);
+            $success = $stmt->execute();
+            $stmt->close();
+            $mysqli->close();
+        }
+    }
+    header('Content-Type: application/json');
+    echo json_encode(['success' => $success]);
+    exit;
+}
+?>
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -8,39 +30,14 @@
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
-    body {
-      background-color: #f4f6f8;
-      padding: 20px;
-      font-family: 'Segoe UI', sans-serif;
-    }
-    .card {
-      border: none;
-      border-radius: 16px;
-      box-shadow: 0 2px 12px rgba(0, 0, 0, 0.05);
-    }
-    table {
-      font-size: 0.9rem;
-    }
-    .expense-table-wrapper {
-      max-height: 220px;
-      overflow-y: auto;
-      width: 100%;
-    }
-    .table thead th {
-      position: sticky;
-      top: 0;
-      background: #fff;
-      z-index: 2;
-    }
-    .small-chart {
-      max-width: 320px;
-      max-height: 320px;
-      margin: 0 auto;
-      display: block;
-    }
+    body { background-color: #f4f6f8; padding: 20px; font-family: 'Segoe UI', sans-serif; }
+    .card { border: none; border-radius: 16px; box-shadow: 0 2px 12px rgba(0, 0, 0, 0.05); }
+    table { font-size: 0.9rem; }
+    .expense-table-wrapper { max-height: 220px; overflow-y: auto; width: 100%; }
+    .table thead th { position: sticky; top: 0; background: #fff; z-index: 2; }
+    .small-chart { max-width: 320px; max-height: 320px; margin: 0 auto; display: block; }
   </style>
 </head>
-
 <body>
   <div class="container">
     <h2 class="mb-4 text-center">Expense & Income Tracker</h2>
@@ -75,7 +72,7 @@
           <p>Total Income: <span id="totalIncome">0</span></p>
           <p>Total Expenses: <span id="totalExpenses">0</span></p>
           <p><strong>Remaining Balance: <span id="balance">0</span></strong></p>
-          <button class="btn btn-secondary w-100" onclick="app.exportCSV()">Export CSV (DB)</button>
+          <button class="btn btn-secondary w-100" onclick="app.exportCSV()">Export To Excel File Format</button>
         </div>
       </div>
     </div>
@@ -141,7 +138,7 @@
 
       async fetchAndRender() {
         const month = document.getElementById('monthFilter').value;
-        const res = await fetch('fetch_records.php?month=' + encodeURIComponent(month));
+        const res = await fetch('fetch_records.php?month=' + encodeURIComponent(month) + '&_=' + Date.now());
         const data = await res.json();
         this.renderTables(data.expenses, data.incomes);
         this.renderSummary(data.expenses, data.incomes);
@@ -223,7 +220,7 @@
             <td>${e.category}</td>
             <td>${e.description}</td>
             <td>${e.amount.toFixed(2)}</td>
-            <td><button class="btn btn-sm btn-danger" onclick="app.deleteExpense(${e.id})">Delete</button></td>
+            <td><button class="btn btn-sm btn-danger" onclick="app.deleteTransaction('expense',${e.id})">Delete</button></td>
           </tr>`;
         });
         incomeTable.innerHTML = '';
@@ -232,7 +229,7 @@
             <td>${i.year}-${String(i.month).padStart(2, '0')}-${String(i.day).padStart(2, '0')}</td>
             <td>${i.source}</td>
             <td>${i.amount.toFixed(2)}</td>
-            <td><button class="btn btn-sm btn-danger" onclick="app.deleteIncome(${i.id})">Delete</button></td>
+            <td><button class="btn btn-sm btn-danger" onclick="app.deleteTransaction('income',${i.id})">Delete</button></td>
           </tr>`;
         });
       }
@@ -317,20 +314,19 @@
         });
       }
 
-      async deleteExpense(id) {
-        if (!confirm('Delete this expense?')) return;
-        const res = await fetch('delete_expense.php?id=' + id, { method: 'DELETE' });
+      async deleteTransaction(type, id) {
+        if (!confirm('Delete this ' + type + '?')) return;
+        const form = new FormData();
+        form.append('action', 'delete');
+        form.append('type', type);
+        form.append('id', id);
+        const res = await fetch('index.php', {
+          method: 'POST',
+          body: form
+        });
         const result = await res.json();
         if (result.success) this.fetchAndRender();
-        else alert('Failed to delete expense.');
-      }
-
-      async deleteIncome(id) {
-        if (!confirm('Delete this income?')) return;
-        const res = await fetch('delete_income.php?id=' + id, { method: 'DELETE' });
-        const result = await res.json();
-        if (result.success) this.fetchAndRender();
-        else alert('Failed to delete income.');
+        else alert('Failed to delete ' + type + '.');
       }
 
       exportCSV() {
@@ -339,8 +335,17 @@
       }
     }
 
-    // Global instance for event handlers
     const app = new ExpenseTrackerApp();
   </script>
 </body>
+
+<!--add footer with my name and year and emoji--> 
+<footer class="text-center mt-5">
+  <p>&copy; Made By Saketh Kenchem 2025 <span role="img" aria-label="smile">🚀💻🛜</span></p
+  <!-- Add a link to the GitHub repository -->
+  <p>
+    <a style="text-decoration: none;" href="https://github.com/SakethKenchem/UniversityExpense-Tracker" target="_blank">View on GitHub</a>
+  </p>
+</footer>
+
 </html>
