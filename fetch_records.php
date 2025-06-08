@@ -26,7 +26,7 @@ if ($monthFilter && preg_match('/^\d{4}-\d{2}$/', $monthFilter)) {
 }
 
 function fetchTable($conn, $table, $columns, $whereClause, $params, $types) {
-    $sql = "SELECT id, " . implode(", ", $columns) . " FROM $table $whereClause ORDER BY year DESC, month DESC, day DESC";
+    $sql = "SELECT id, " . implode(", ", $columns) . " FROM $table $whereClause ORDER BY year DESC, month DESC, day DESC, id DESC";
     $stmt = $conn->prepare($sql);
     if ($whereClause) {
         $stmt->bind_param($types, ...$params);

@@ -1,167 +1,196 @@
 <?php
-$host = "localhost";
-$db = "expense_tracker";
-$user = "root";
-$pass = "S00per-d00per";
 
-$conn = new mysqli($host, $user, $pass, $db);
-if ($conn->connect_error) {
-    http_response_code(500);
-    die("DB connection failed");
-}
+require 'vendor/autoload.php';
 
-$monthFilter = $_GET['month'] ?? ""; // YYYY-MM or empty
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
-$whereClause = "";
-$params = [];
-$types = "";
+class ExpenseExporter
+{
+    private $conn;
+    private $spreadsheet;
+    private $sheet;
+    private $monthFilter;
+    private $whereClause = "";
+    private $params = [];
+    private $types = "";
 
-if ($monthFilter && preg_match('/^\d{4}-\d{2}$/', $monthFilter)) {
-    [$y, $m] = explode('-', $monthFilter);
-    $whereClause = " WHERE year = ? AND month = ?";
-    $params = [$y, (int)$m];
-    $types = "ii";
-}
-
-function fetchCSVData($conn, $table, $columns, $whereClause, $params, $types) {
-    $sql = "SELECT " . implode(", ", $columns) . " FROM $table $whereClause ORDER BY year DESC, month DESC, day DESC";
-    $stmt = $conn->prepare($sql);
-    if ($whereClause) $stmt->bind_param($types, ...$params);
-    $stmt->execute();
-    $res = $stmt->get_result();
-    $rows = [];
-    while ($row = $res->fetch_assoc()) {
-        $rows[] = $row;
+    public function __construct($dbConfig, $monthFilter = "")
+    {
+        $this->connectDb($dbConfig);
+        $this->spreadsheet = new Spreadsheet();
+        $this->sheet = $this->spreadsheet->getActiveSheet();
+        $this->monthFilter = $monthFilter;
+        $this->prepareFilter();
     }
-    $stmt->close();
-    return $rows;
-}
 
-$expenses = fetchCSVData($conn, "expenses", ["year", "month", "day", "category", "description", "amount"], $whereClause, $params, $types);
-$incomes = fetchCSVData($conn, "income", ["year", "month", "day", "source", "amount"], $whereClause, $params, $types);
-
-// Calculate totals
-$totalExpenses = array_sum(array_column($expenses, 'amount'));
-$totalIncome = array_sum(array_column($incomes, 'amount'));
-$remainingBalance = $totalIncome - $totalExpenses;
-
-// Helper: group by month
-function groupByMonth($rows, $dateFields = ['year', 'month']) {
-    $grouped = [];
-    foreach ($rows as $row) {
-        $key = $row[$dateFields[0]] . '-' . str_pad($row[$dateFields[1]], 2, '0', STR_PAD_LEFT);
-        $grouped[$key][] = $row;
-    }
-    krsort($grouped); // latest month first
-    return $grouped;
-}
-
-// Helper: classify by category
-function classifyByCategory($rows, $categories = ['uber', 'food', 'airtime']) {
-    $result = [];
-    foreach ($categories as $cat) {
-        $result[$cat] = 0;
-    }
-    foreach ($rows as $row) {
-        $cat = strtolower($row['category'] ?? '');
-        if (isset($result[$cat])) {
-            $result[$cat] += $row['amount'];
+    private function connectDb($dbConfig)
+    {
+        $this->conn = new mysqli(
+            $dbConfig['host'],
+            $dbConfig['user'],
+            $dbConfig['pass'],
+            $dbConfig['db']
+        );
+        if ($this->conn->connect_error) {
+            http_response_code(500);
+            die("DB connection failed");
         }
     }
-    return $result;
-}
 
-// Output CSV with improved styling
-header('Content-Type: text/csv');
-header('Content-Disposition: attachment; filename="expense_income_export.csv"');
-
-$output = fopen('php://output', 'w');
-
-// Section: Expenses (all)
-fputcsv($output, ['==== EXPENSES ====']);
-fputcsv($output, ['Date', 'Category', 'Description', 'Amount']);
-foreach ($expenses as $e) {
-    $date = sprintf('%04d-%02d-%02d', $e['year'], $e['month'], $e['day']);
-    fputcsv($output, [$date, $e['category'], $e['description'], number_format($e['amount'], 2)]);
-}
-fputcsv($output, ['Total Expenses', '', '', number_format($totalExpenses, 2)]);
-fputcsv($output, []);
-
-// Section: Income (all)
-fputcsv($output, ['==== INCOME ====']);
-fputcsv($output, ['Date', 'Source', 'Amount']);
-foreach ($incomes as $i) {
-    $date = sprintf('%04d-%02d-%02d', $i['year'], $i['month'], $i['day']);
-    fputcsv($output, [$date, $i['source'], number_format($i['amount'], 2)]);
-}
-fputcsv($output, ['Total Income', '', number_format($totalIncome, 2)]);
-fputcsv($output, []);
-
-// Section: Remaining Balance
-fputcsv($output, ['==== REMAINING BALANCE ====']);
-fputcsv($output, ['Balance', number_format($remainingBalance, 2)]);
-fputcsv($output, []);
-
-// Section: Expenses by Month
-fputcsv($output, ['==== EXPENSES BY MONTH ====']);
-$expensesByMonth = groupByMonth($expenses);
-foreach ($expensesByMonth as $month => $rows) {
-    $monthTotal = array_sum(array_column($rows, 'amount'));
-    fputcsv($output, ["$month", '', '', number_format($monthTotal, 2)]);
-    foreach ($rows as $e) {
-        $date = sprintf('%04d-%02d-%02d', $e['year'], $e['month'], $e['day']);
-        fputcsv($output, [$date, $e['category'], $e['description'], number_format($e['amount'], 2)]);
-    }
-    fputcsv($output, []); // space between months
-}
-
-// Section: Income by Month
-fputcsv($output, ['==== INCOME BY MONTH ====']);
-$incomesByMonth = groupByMonth($incomes);
-foreach ($incomesByMonth as $month => $rows) {
-    $monthTotal = array_sum(array_column($rows, 'amount'));
-    fputcsv($output, ["$month", '', number_format($monthTotal, 2)]);
-    foreach ($rows as $i) {
-        $date = sprintf('%04d-%02d-%02d', $i['year'], $i['month'], $i['day']);
-        fputcsv($output, [$date, $i['source'], number_format($i['amount'], 2)]);
-    }
-    fputcsv($output, []); // space between months
-}
-
-// Section: Expense Classification by Month (Uber, Food, Airtime)
-fputcsv($output, ['==== EXPENSE CLASSIFICATION BY MONTH (Uber, Food, Airtime) ====']);
-fputcsv($output, ['Month', 'Uber', 'Food', 'Airtime']);
-foreach ($expensesByMonth as $month => $rows) {
-    $classified = classifyByCategory($rows, ['uber', 'food', 'airtime']);
-    fputcsv($output, [
-        $month,
-        number_format($classified['uber'], 2),
-        number_format($classified['food'], 2),
-        number_format($classified['airtime'], 2)
-    ]);
-}
-fputcsv($output, []);
-
-// Section: Income Classification by Month (Uber, Food, Airtime)
-fputcsv($output, ['==== INCOME CLASSIFICATION BY MONTH (Uber, Food, Airtime) ====']);
-fputcsv($output, ['Month', 'Uber', 'Food', 'Airtime']);
-foreach ($incomesByMonth as $month => $rows) {
-    // For income, use 'source' instead of 'category'
-    $classified = ['uber' => 0, 'food' => 0, 'airtime' => 0];
-    foreach ($rows as $row) {
-        $src = strtolower($row['source'] ?? '');
-        if (isset($classified[$src])) {
-            $classified[$src] += $row['amount'];
+    private function prepareFilter()
+    {
+        if ($this->monthFilter && preg_match('/^\d{4}-\d{2}$/', $this->monthFilter)) {
+            [$y, $m] = explode('-', $this->monthFilter);
+            $this->whereClause = " WHERE year = ? AND month = ?";
+            $this->params = [$y, (int)$m];
+            $this->types = "ii";
         }
     }
-    fputcsv($output, [
-        $month,
-        number_format($classified['uber'], 2),
-        number_format($classified['food'], 2),
-        number_format($classified['airtime'], 2)
-    ]);
+
+    private function fetchCSVData($table, $columns)
+    {
+        $sql = "SELECT " . implode(", ", $columns) . " FROM $table {$this->whereClause} ORDER BY year DESC, month DESC, day DESC";
+        $stmt = $this->conn->prepare($sql);
+        if ($this->whereClause) $stmt->bind_param($this->types, ...$this->params);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        $rows = [];
+        while ($row = $res->fetch_assoc()) {
+            $rows[] = $row;
+        }
+        $stmt->close();
+        return $rows;
+    }
+
+    private function groupByMonth($rows, $dateFields = ['year', 'month'])
+    {
+        $grouped = [];
+        foreach ($rows as $row) {
+            $key = $row[$dateFields[0]] . '-' . str_pad($row[$dateFields[1]], 2, '0', STR_PAD_LEFT);
+            $grouped[$key][] = $row;
+        }
+        krsort($grouped);
+        return $grouped;
+    }
+
+    private function classifyByCategory($rows, $categories = ['uber', 'food', 'airtime'])
+    {
+        $result = array_fill_keys($categories, 0);
+        foreach ($rows as $row) {
+            $cat = strtolower($row['category'] ?? '');
+            if (isset($result[$cat])) {
+                $result[$cat] += $row['amount'];
+            }
+        }
+        return $result;
+    }
+
+    private function boldRow($rowNum, $colCount, $startCol = 'A')
+    {
+        $startIndex = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::columnIndexFromString($startCol);
+        $endCol = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($startIndex + $colCount - 1);
+        $this->sheet->getStyle("{$startCol}{$rowNum}:{$endCol}{$rowNum}")->getFont()->setBold(true);
+    }
+
+    public function export()
+    {
+        $expenses = $this->fetchCSVData("expenses", ["year", "month", "day", "category", "description", "amount"]);
+        $incomes = $this->fetchCSVData("income", ["year", "month", "day", "source", "amount"]);
+
+        $totalExpenses = array_sum(array_column($expenses, 'amount'));
+        $totalIncome = array_sum(array_column($incomes, 'amount'));
+        $remainingBalance = $totalIncome - $totalExpenses;
+
+        // Expenses Section
+        $expensesCol = 'A';
+        $row = 1;
+        $this->sheet->setCellValue("{$expensesCol}{$row}", '==== EXPENSES ====');
+        $this->boldRow($row, 4, $expensesCol);
+        $row++;
+        $this->sheet->fromArray(['Date', 'Category', 'Description', 'Amount'], NULL, "{$expensesCol}{$row}");
+        $this->boldRow($row, 4, $expensesCol);
+        $row++;
+        foreach ($expenses as $e) {
+            $date = sprintf('%04d-%02d-%02d', $e['year'], $e['month'], $e['day']);
+            $this->sheet->fromArray([$date, $e['category'], $e['description'], number_format($e['amount'], 2)], NULL, "{$expensesCol}{$row}");
+            $row++;
+        }
+        $this->sheet->fromArray(['Total Expenses', '', '', number_format($totalExpenses, 2)], NULL, "{$expensesCol}{$row}");
+
+        // Income Section
+        $incomeCol = 'F';
+        $incomeRow = 1;
+        $this->sheet->setCellValue("{$incomeCol}{$incomeRow}", '==== INCOME ====');
+        $this->boldRow($incomeRow, 3, $incomeCol);
+        $incomeRow++;
+        $this->sheet->fromArray(['Date', 'Source', 'Amount'], NULL, "{$incomeCol}{$incomeRow}");
+        $this->boldRow($incomeRow, 3, $incomeCol);
+        $incomeRow++;
+        foreach ($incomes as $i) {
+            $date = sprintf('%04d-%02d-%02d', $i['year'], $i['month'], $i['day']);
+            $this->sheet->fromArray([$date, $i['source'], number_format($i['amount'], 2)], NULL, "{$incomeCol}{$incomeRow}");
+            $incomeRow++;
+        }
+        $this->sheet->fromArray(['Total Income', '', number_format($totalIncome, 2)], NULL, "{$incomeCol}{$incomeRow}");
+
+        // Remaining Balance Section
+        $balanceCol = 'K';
+        $balanceRow = 1;
+        $this->sheet->setCellValue("{$balanceCol}{$balanceRow}", '==== REMAINING BALANCE ====');
+        $this->boldRow($balanceRow, 2, $balanceCol);
+        $balanceRow++;
+        $this->sheet->fromArray(['Balance', number_format($remainingBalance, 2)], NULL, "{$balanceCol}{$balanceRow}");
+        $this->boldRow($balanceRow, 2, $balanceCol);
+
+        // Find max rows used in main 3 sections for spacing later
+        $maxRow = max($row, $incomeRow, $balanceRow);
+        $startRow = $maxRow + 3;
+
+        // Expense Classification by Month
+        $this->sheet->setCellValue("A{$startRow}", '==== EXPENSE CLASSIFICATION BY MONTH (Uber, Food, Airtime) ====');
+        $this->boldRow($startRow, 4, 'A');
+        $startRow++;
+        $this->sheet->fromArray(['Month', 'Uber', 'Food', 'Airtime'], NULL, "A{$startRow}");
+        $this->boldRow($startRow, 4, 'A');
+        $startRow++;
+
+        $expensesByMonth = $this->groupByMonth($expenses);
+        $categories = ['uber', 'food', 'airtime'];
+        foreach ($expensesByMonth as $month => $rows) {
+            $classified = $this->classifyByCategory($rows, $categories);
+            $this->sheet->fromArray([
+                $month,
+                number_format($classified['uber'], 2),
+                number_format($classified['food'], 2),
+                number_format($classified['airtime'], 2),
+            ], NULL, "A{$startRow}");
+            $startRow++;
+        }
+
+        // Autofit columns
+        foreach (range('A', 'L') as $col) {
+            $this->sheet->getColumnDimension($col)->setAutoSize(true);
+        }
+
+        // Output Excel file
+        header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        header('Content-Disposition: attachment; filename="university_expenses.xlsx"');
+        $writer = new Xlsx($this->spreadsheet);
+        $writer->save('php://output');
+        $this->conn->close();
+        exit;
+    }
 }
 
-fclose($output);
-$conn->close();
-exit;
+// Usage
+$dbConfig = [
+    'host' => 'localhost',
+    'db'   => 'expense_tracker',
+    'user' => 'root',
+    'pass' => 'S00per-d00per'
+];
+$monthFilter = $_GET['month'] ?? "";
+
+$exporter = new ExpenseExporter($dbConfig, $monthFilter);
+$exporter->export();
