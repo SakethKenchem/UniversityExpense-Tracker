@@ -26,21 +26,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Expense Tracker App</title>
+  <title>University Expense Tracker</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
     body { background-color: #f4f6f8; padding: 20px; font-family: 'Segoe UI', sans-serif; }
     .card { border: none; border-radius: 16px; box-shadow: 0 2px 12px rgba(0, 0, 0, 0.05); }
     table { font-size: 0.9rem; }
-    .expense-table-wrapper { max-height: 220px; overflow-y: auto; width: 100%; }
+    .expense-table-wrapper { max-height: 350px; overflow-y: auto; width: 100%; }
+    .expense-table-wrapper  { max-height: 350px; overflow-y: auto; width: 100%; }
     .table thead th { position: sticky; top: 0; background: #fff; z-index: 2; }
     .small-chart { max-width: 320px; max-height: 320px; margin: 0 auto; display: block; }
   </style>
 </head>
 <body>
   <div class="container">
-    <h2 class="mb-4 text-center">Expense & Income Tracker</h2>
+    <h2 class="mb-4 text-center">University Expense Tracker</h2>
     <div class="row g-3 mb-4">
       <div class="col-md-4">
         <div class="card p-3">
@@ -71,7 +72,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
           <h5>Summary</h5>
           <p>Total Income: <span id="totalIncome">0</span></p>
           <p>Total Expenses: <span id="totalExpenses">0</span></p>
-          <p><strong>Remaining Balance: <span id="balance">0</span></strong></p>
+            <p><strong>Remaining Balance: <span id="balance">0</span></strong> <span style="font-size:0.95em;color:#888;">as of <span id="balanceDate"><?php echo date('Y-m-d'); ?></span></span></p>
           <button class="btn btn-secondary w-100" onclick="app.exportCSV()">Export To Excel File Format</button>
         </div>
       </div>
@@ -106,6 +107,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
       <div class="col-md-6">
         <div class="card p-3 mb-4">
           <h5 class="mb-3">Income Records</h5>
+          <div class="expense-table-wrapper">
           <table class="table table-striped">
             <thead>
               <tr>
@@ -117,6 +119,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             </thead>
             <tbody id="incomeTable"></tbody>
           </table>
+          </div>
         </div>
       </div>
     </div>

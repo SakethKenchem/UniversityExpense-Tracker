@@ -52,7 +52,7 @@ function fetchTable($conn, $table, $columns, $whereClause, $params, $types) {
 }
 
 $expenses = fetchTable($conn, "expenses", ["amount", "category", "description", "day", "month", "year"], $whereClause, $params, $types);
-$incomes = fetchTable($conn, "income", ["amount", "source", "day", "month", "year"], $whereClause, $params, $params ? $types : "");
+$incomes = fetchTable($conn, "income", ["amount", "source", "day", "month", "year"], $whereClause, $params, $params ? $types : "", "ORDER BY year DESC, month DESC, day DESC, id DESC");
 
 echo json_encode([
     "expenses" => $expenses,
