@@ -20,6 +20,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     echo json_encode(['success' => $success]);
     exit;
 }
+
+// --- PHP search handler for AJAX ---
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['search_expenses'])) {
+    $search = $_GET['search_expenses'];
+    $mysqli = new mysqli("localhost", "root", "S00per-d00per", "expense_tracker");
+    $results = [];
+    if (!$mysqli->connect_error) {
+        $like = '%' . $mysqli->real_escape_string($search) . '%';
+        $sql = "SELECT id, category, description, amount, day, month, year FROM expenses 
+                WHERE category LIKE ? OR description LIKE ? OR amount LIKE ? OR day LIKE ? OR month LIKE ? OR year LIKE ?";
+        $stmt = $mysqli->prepare($sql);
+        $stmt->bind_param("ssssss", $like, $like, $like, $like, $like, $like);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        while ($row = $res->fetch_assoc()) {
+            $row['amount'] = floatval($row['amount']);
+            $results[] = $row;
+        }
+        $stmt->close();
+        $mysqli->close();
+    }
+    header('Content-Type: application/json');
+    echo json_encode(['expenses' => $results]);
+    exit;
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -37,6 +62,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     .expense-table-wrapper  { max-height: 350px; overflow-y: auto; width: 100%; }
     .table thead th { position: sticky; top: 0; background: #fff; z-index: 2; }
     .small-chart { max-width: 320px; max-height: 320px; margin: 0 auto; display: block; }
+    .search-bar { max-width: 350px; margin-bottom: 10px; }
   </style>
 </head>
 <body>
@@ -82,6 +108,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         <select id="monthFilter" class="form-control" onchange="app.fetchAndRender()">
           <option value="">All Months</option>
         </select>
+      </div>
+      <div class="col-md-4">
+        <!-- Search bar for expenses -->
+        <input type="text" id="expenseSearch" class="form-control search-bar" placeholder="Search expenses (all fields)" oninput="app.searchExpenses()" />
       </div>
     </div>
     <div class="row">
@@ -136,6 +166,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
       constructor() {
         this.myPie = null;
         this.myExpensePie = null;
+        this.expensesCache = [];
+        this.incomesCache = [];
+        this.lastSearch = '';
         this.fetchAndRender();
       }
 
@@ -143,11 +176,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         const month = document.getElementById('monthFilter').value;
         const res = await fetch('fetch_records.php?month=' + encodeURIComponent(month) + '&_=' + Date.now());
         const data = await res.json();
+        this.expensesCache = data.expenses;
+        this.incomesCache = data.incomes;
         this.renderTables(data.expenses, data.incomes);
         this.renderSummary(data.expenses, data.incomes);
         this.populateMonths(data.expenses, data.incomes);
         this.drawChart(data.incomes);
         this.drawExpenseChart(data.expenses);
+        document.getElementById('expenseSearch').value = '';
+        this.lastSearch = '';
       }
 
       async addExpense() {
@@ -335,6 +372,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
       exportCSV() {
         const month = document.getElementById('monthFilter').value;
         window.open('export_csv.php?month=' + encodeURIComponent(month), '_blank');
+      }
+
+      async searchExpenses() {
+        const query = document.getElementById('expenseSearch').value.trim();
+        this.lastSearch = query;
+        if (!query) {
+          // If search is empty, show all (filtered by month)
+          this.renderTables(this.expensesCache, this.incomesCache);
+          this.renderSummary(this.expensesCache, this.incomesCache);
+          this.drawExpenseChart(this.expensesCache);
+          return;
+        }
+        // AJAX search
+        const res = await fetch('index.php?search_expenses=' + encodeURIComponent(query));
+        const data = await res.json();
+        // Show only filtered expenses, but keep incomes as is
+        this.renderTables(data.expenses, this.incomesCache);
+        // Update summary and chart for filtered expenses
+        this.renderSummary(data.expenses, this.incomesCache);
+        this.drawExpenseChart(data.expenses);
       }
     }
 
