@@ -1,50 +1,77 @@
 <?php
-// --- PHP delete handler at the top of the file ---
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'delete') {
+class ExpenseTrackerHandler {
+  private $mysqli;
+
+  public function __construct() {
+    $this->mysqli = new mysqli("localhost", "root", "S00per-d00per", "expense_tracker");
+  }
+
+  public function __destruct() {
+    if ($this->mysqli && !$this->mysqli->connect_error) {
+      $this->mysqli->close();
+    }
+  }
+
+  public function handleRequest() {
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'delete') {
+      $this->handleDelete();
+    } elseif ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['search_expenses'])) {
+      $this->handleSearch();
+    }
+  }
+
+  private function handleDelete() {
     $type = $_POST['type'] ?? '';
     $id = intval($_POST['id'] ?? 0);
     $allowed = ['expense' => 'expenses', 'income' => 'income'];
     $table = $allowed[$type] ?? null;
     $success = false;
-    if ($table && $id > 0) {
-        $mysqli = new mysqli("localhost", "root", "S00per-d00per", "expense_tracker");
-        if (!$mysqli->connect_error) {
-            $stmt = $mysqli->prepare("DELETE FROM `$table` WHERE id=?");
-            $stmt->bind_param("i", $id);
-            $success = $stmt->execute();
-            $stmt->close();
-            $mysqli->close();
-        }
+    if ($table && $id > 0 && !$this->mysqli->connect_error) {
+      $stmt = $this->mysqli->prepare("DELETE FROM `$table` WHERE id=?");
+      $stmt->bind_param("i", $id);
+      $success = $stmt->execute();
+      $stmt->close();
     }
     header('Content-Type: application/json');
     echo json_encode(['success' => $success]);
     exit;
-}
+  }
 
-// --- PHP search handler for AJAX ---
-if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['search_expenses'])) {
+  private function handleSearch() {
     $search = $_GET['search_expenses'];
-    $mysqli = new mysqli("localhost", "root", "S00per-d00per", "expense_tracker");
+    $month = $_GET['month'] ?? '';
     $results = [];
-    if (!$mysqli->connect_error) {
-        $like = '%' . $mysqli->real_escape_string($search) . '%';
-        $sql = "SELECT id, category, description, amount, day, month, year FROM expenses 
-                WHERE category LIKE ? OR description LIKE ? OR amount LIKE ? OR day LIKE ? OR month LIKE ? OR year LIKE ?";
-        $stmt = $mysqli->prepare($sql);
-        $stmt->bind_param("ssssss", $like, $like, $like, $like, $like, $like);
-        $stmt->execute();
-        $res = $stmt->get_result();
-        while ($row = $res->fetch_assoc()) {
-            $row['amount'] = floatval($row['amount']);
-            $results[] = $row;
-        }
-        $stmt->close();
-        $mysqli->close();
+    if (!$this->mysqli->connect_error) {
+      $like = '%' . $this->mysqli->real_escape_string($search) . '%';
+      $params = [$like, $like, $like, $like, $like, $like];
+      $types = "ssssss";
+      $sql = "SELECT id, category, description, amount, day, month, year FROM expenses 
+          WHERE (category LIKE ? OR description LIKE ? OR amount LIKE ? OR day LIKE ? OR month LIKE ? OR year LIKE ?)";
+      if ($month) {
+        [$y, $m] = explode('-', $month);
+        $sql .= " AND year=? AND month=?";
+        $params[] = $y;
+        $params[] = ltrim($m, '0');
+        $types .= "ss";
+      }
+      $stmt = $this->mysqli->prepare($sql);
+      $stmt->bind_param($types, ...$params);
+      $stmt->execute();
+      $res = $stmt->get_result();
+      while ($row = $res->fetch_assoc()) {
+        $row['amount'] = floatval($row['amount']);
+        $results[] = $row;
+      }
+      $stmt->close();
     }
     header('Content-Type: application/json');
     echo json_encode(['expenses' => $results]);
     exit;
+  }
 }
+
+$handler = new ExpenseTrackerHandler();
+$handler->handleRequest();
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -98,26 +125,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['search_expenses'])) {
           <h5>Summary</h5>
           <p>Total Income: <span id="totalIncome">0</span></p>
           <p>Total Expenses: <span id="totalExpenses">0</span></p>
-            <p><strong>Remaining Balance: <span id="balance">0</span></strong> <span style="font-size:0.95em;color:#888;">as of <span id="balanceDate"><?php echo date('Y-m-d'); ?></span></span></p>
+          <p>
+            <strong>Remaining Balance: <span id="balance">0</span></strong>
+            <span style="font-size:0.95em;color:#888;">as of <span id="balanceDate"><?php echo date('Y-m-d'); ?></span></span>
+          </p>
+          <p>
+            <span style="font-size:0.95em;color:#888;">Filtered Expenses: <span id="filteredExpenses">0</span></span>
+          </p>
           <button class="btn btn-secondary w-100" onclick="app.exportCSV()">Export To Excel File Format</button>
         </div>
       </div>
     </div>
     <div class="row mb-4">
       <div class="col-md-4">
-        <select id="monthFilter" class="form-control" onchange="app.fetchAndRender()">
+        <select id="monthFilter" class="form-control" onchange="app.onMonthChange()">
           <option value="">All Months</option>
         </select>
       </div>
-      <div class="col-md-4">
-        <!-- Search bar for expenses -->
-        <input type="text" id="expenseSearch" class="form-control search-bar" placeholder="Search expenses (all fields)" oninput="app.searchExpenses()" />
-      </div>
+
     </div>
     <div class="row">
       <div class="col-md-6">
         <div class="card p-3 mb-4">
-          <h5 class="mb-3">Expense Records</h5>
+          <div class="d-flex align-items-center mb-3">
+            <h5 class="mb-0 me-3">Expense Records</h5>
+            <input type="text" id="expenseSearch" class="form-control search-bar" placeholder="Search expenses (all fields)" oninput="app.searchExpenses()" style="max-width: 350px;" />
+          </div>
           <div class="expense-table-wrapper">
             <table class="table table-striped mb-0">
               <thead>
@@ -169,17 +202,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['search_expenses'])) {
         this.expensesCache = [];
         this.incomesCache = [];
         this.lastSearch = '';
+        this.lastMonth = '';
         this.fetchAndRender();
       }
 
       async fetchAndRender() {
         const month = document.getElementById('monthFilter').value;
+        this.lastMonth = month;
         const res = await fetch('fetch_records.php?month=' + encodeURIComponent(month) + '&_=' + Date.now());
         const data = await res.json();
         this.expensesCache = data.expenses;
         this.incomesCache = data.incomes;
         this.renderTables(data.expenses, data.incomes);
-        this.renderSummary(data.expenses, data.incomes);
+        this.renderSummary(data.expenses, data.incomes, data.expenses);
         this.populateMonths(data.expenses, data.incomes);
         this.drawChart(data.incomes);
         this.drawExpenseChart(data.expenses);
@@ -274,12 +309,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['search_expenses'])) {
         });
       }
 
-      renderSummary(expenses, incomes) {
+      renderSummary(expenses, incomes, filteredExpenses) {
+        // expenses: all expenses for the month, incomes: all incomes for the month, filteredExpenses: filtered by search
         const totalExpenses = expenses.reduce((sum, e) => sum + e.amount, 0);
         const totalIncome = incomes.reduce((sum, i) => sum + i.amount, 0);
+        const filteredTotal = filteredExpenses ? filteredExpenses.reduce((sum, e) => sum + e.amount, 0) : totalExpenses;
         document.getElementById('totalExpenses').textContent = totalExpenses.toFixed(2);
         document.getElementById('totalIncome').textContent = totalIncome.toFixed(2);
         document.getElementById('balance').textContent = (totalIncome - totalExpenses).toFixed(2);
+        document.getElementById('filteredExpenses').textContent = filteredTotal.toFixed(2);
       }
 
       populateMonths(expenses, incomes) {
@@ -376,22 +414,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['search_expenses'])) {
 
       async searchExpenses() {
         const query = document.getElementById('expenseSearch').value.trim();
+        const month = document.getElementById('monthFilter').value;
         this.lastSearch = query;
+        this.lastMonth = month;
         if (!query) {
           // If search is empty, show all (filtered by month)
           this.renderTables(this.expensesCache, this.incomesCache);
-          this.renderSummary(this.expensesCache, this.incomesCache);
+          this.renderSummary(this.expensesCache, this.incomesCache, this.expensesCache);
           this.drawExpenseChart(this.expensesCache);
           return;
         }
-        // AJAX search
-        const res = await fetch('index.php?search_expenses=' + encodeURIComponent(query));
+        // AJAX search with month filter
+        const res = await fetch('index.php?search_expenses=' + encodeURIComponent(query) + '&month=' + encodeURIComponent(month));
         const data = await res.json();
         // Show only filtered expenses, but keep incomes as is
         this.renderTables(data.expenses, this.incomesCache);
         // Update summary and chart for filtered expenses
-        this.renderSummary(data.expenses, this.incomesCache);
+        this.renderSummary(this.expensesCache, this.incomesCache, data.expenses);
         this.drawExpenseChart(data.expenses);
+      }
+
+      async onMonthChange() {
+        // If search is active, re-search with new month
+        if (document.getElementById('expenseSearch').value.trim()) {
+          this.searchExpenses();
+        } else {
+          this.fetchAndRender();
+        }
       }
     }
 
@@ -399,10 +448,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['search_expenses'])) {
   </script>
 </body>
 
-<!--add footer with my name and year and emoji--> 
 <footer class="text-center mt-5">
-  <p>&copy; Made By Saketh Kenchem 2025 <span role="img" aria-label="smile">🚀💻🛜</span></p
-  <!-- Add a link to the GitHub repository -->
+  <p>&copy; Made By Saketh Kenchem 2025 <span role="img" aria-label="smile">🚀💻🛜</span></p>
   <p>
     <a style="text-decoration: none;" href="https://github.com/SakethKenchem/UniversityExpense-Tracker" target="_blank">View on GitHub</a>
   </p>
